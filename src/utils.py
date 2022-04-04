@@ -8,7 +8,7 @@ from nav_msgs.msg import OccupancyGrid
 import json
 import tf.transformations
 import tf
-from scipy import ndimage
+# from scipy import ndimage
 
 
 EPSILON = 0.00000000001

@@ -3,7 +3,7 @@
 import rospy
 import numpy as np
 import tf
-from geometry_msgs.msg import PoseStamped, PoseArray
+from geometry_msgs.msg import PoseStamped, PoseArray, Point
 from nav_msgs.msg import Odometry, OccupancyGrid
 import rospkg
 import time, os
@@ -23,7 +23,7 @@ class PathPlan(object):
         self.traj_pub = rospy.Publisher("/trajectory/current", PoseArray, queue_size=10)
         self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb)
 
-        self.box_size = 5 #Determines how granular to discretize the data
+        self.box_size = 10 #Determines how granular to discretize the data
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
 
         self.map_ready = False
@@ -103,29 +103,57 @@ class PathPlan(object):
 
     def plan_path(self, start_point, goal_point, map):
         if self.map_ready and self.start_ready and self.goal_ready:
-            #Get the rotation matrix from the map frame to the image frame
-            rot_mat = tf.transformations.quaternion_matrix([self.map_orientation.x, self.map_orientation.y, self.map_orientation.z, self.map_orientation.w])
-            rot_mat = np.array([[rot_mat[0,0], rot_mat[0,1]], [rot_mat[1,0], rot_mat[1,1]]])
-
-            #Transform the start and end points from the map frame to the image frame
-            start_pixel = (np.dot(rot_mat, start_point) + np.array([self.map_position.x, self.map_position.y])) / self.map_resolution
-            goal_pixel = (np.dot(rot_mat, goal_point) + np.array([self.map_position.x, self.map_position.y])) / self.map_resolution
-
-            #Scale the pixels to their corresponding location in our discrete grid space (and flip x and y)
-            discretized_start = (int(start_pixel[1]//self.box_size), int(start_pixel[0]//self.box_size))
-            discretized_goal = (int(goal_pixel[1]//self.box_size), int(goal_pixel[0]//self.box_size))
+            #Convert the start and goal point into their discretized coordinates
+            discretized_start = self.xy_to_discretized(start_point)
+            discretized_goal = self.xy_to_discretized(goal_point)
 
             #Run A* using the discretized start and goal
-            path = self.A_star(discretized_start, discretized_goal)
-            rospy.loginfo(path)
+            uv_path = self.A_star(discretized_start, discretized_goal)
 
-            #TODO: Convert the results of A* to meters + transform to map frame
+            #Convert path from (u,v) pixels to (x,y) coordinates in the map frame
+            xy_path = []
+            for coord in uv_path:
+                xy_coord = self.discretized_to_xy(coord)
+                xy_path.append(xy_coord)
+
+                point = Point()
+                point.x = xy_coord[0]
+                point.y = xy_coord[1]
+                self.trajectory.addPoint(point)
 
             # publish trajectory
             self.traj_pub.publish(self.trajectory.toPoseArray())
 
             # visualize trajectory Markers
             self.trajectory.publish_viz()
+
+    def xy_to_discretized(self, coord):
+        #Get the rotation matrix from the map frame to the image frame
+        rot_mat = tf.transformations.quaternion_matrix([self.map_orientation.x, self.map_orientation.y, self.map_orientation.z, self.map_orientation.w])
+        rot_mat = np.array([[rot_mat[0,0], rot_mat[0,1]], [rot_mat[1,0], rot_mat[1,1]]])
+
+        #Transform the coordinate from the map frame to the image frame
+        pixel = (np.dot(rot_mat, coord) + np.array([self.map_position.x, self.map_position.y])) / self.map_resolution
+
+        #Scale the pixel to its corresponding location in our discrete grid space (and flip x and y)
+        discretized = (int(pixel[1]//self.box_size), int(pixel[0]//self.box_size))
+
+        return discretized
+
+    def discretized_to_xy(self, coord):
+        #Get the rotation matrix from the image frame to the map frame
+        quat_inverse = tf.transformations.quaternion_inverse([self.map_orientation.x, self.map_orientation.y, self.map_orientation.z, self.map_orientation.w])
+        rot_mat = tf.transformations.quaternion_matrix(quat_inverse)
+        rot_mat = np.array([[rot_mat[0,0], rot_mat[0,1]], [rot_mat[1,0], rot_mat[1,1]]])
+
+        #Get the xy value of the given coordinate
+        xy_untranslated = np.array([coord[1], coord[0]]) * self.box_size * self.map_resolution
+
+        #Translate and rotate the xy coordinate into the map frame
+        xy_translated = xy_untranslated - np.array([self.map_position.x, self.map_position.y])
+        xy = np.dot(rot_mat, xy_translated)
+
+        return tuple(xy)
 
     def A_star(self, start, goal):
         #Heuristic function based on the straight line distance from start to goal

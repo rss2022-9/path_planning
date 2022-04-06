@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from turtle import left
+from sklearn import tree
 import rospy
 import numpy as np
 import tf
@@ -26,6 +28,8 @@ class PathPlan(object):
         self.box_size = 10 #Determines how granular to discretize the data
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
 
+        self.delta = 0.5 # steer delta
+
         self.map_ready = False
         self.start_ready = False
         self.goal_ready = False
@@ -34,6 +38,8 @@ class PathPlan(object):
         self.map_height = None
         self.map_resolution = None
         self.map_data = None
+        self.dmap_width = None # width of discretized map
+        self.dmap_height= None # height of discretized map
 
         self.start_point = None
         self.goal_point = None
@@ -49,6 +55,9 @@ class PathPlan(object):
 
         #Discretize the map
         self.map_data = self.discretize_map(self.map_height, self.map_width, np.array(msg.data))
+        self.dmap_height, self.dmap_width = self.map_data.shape
+
+        rospy.loginfo(np.unique(msg.data))
 
         #Signal that the map has been loaded
         self.map_ready = True
@@ -186,9 +195,6 @@ class PathPlan(object):
                     score[node] = temp_cost + heuristic_func(node, goal)
                     if node not in open:
                         open.add(node)
-
-    def rapidly_random_tree(self, start, goal):
-        pass
     
     def get_neighbors(self, node):
         #Add the 8 adjacent cells (vertical, horizontal, and diagonal) to the set of neighbors
@@ -210,7 +216,6 @@ class PathPlan(object):
 
         return neighbors
 
-
     def get_path(self, segments, node):
         path = [node]
         while node in segments.keys():
@@ -218,6 +223,59 @@ class PathPlan(object):
             path.append(node)
         path.reverse()
         return path
+
+    def RRT_search(self, start, goal):
+
+        tree = []
+        root = (start, -1) # each leaf contains position and parent index
+        tree.append(root)
+        
+        while True:
+            x_rand       = self.rand_sample()                    # randomly sample new point
+            leaf_nearest = self.find_nearest_leaf(x_rand, tree)  # find the nearest leaf(index) to sampled point
+            leaf_new     = self.steer(x_rand, tree[leaf_nearest], self.delta)      # setup new leaf pos, we don't want to go too far and have the obstacle. Also possible to include dynamic?
+
+            if self.obstacle_free(tree[leaf_nearest], leaf_new):
+                leaf_new = (leaf_new, leaf_nearest)  # pos and parent
+                tree.append(leaf_new)
+                if leaf_new == goal:
+                    return self.get_path()           # TODO: check compatibility
+ 
+    def rand_sample(self):
+        # randomly sample point in the map
+        # TODO: setup voronoi bias in the future
+        while True:
+            x = np.random.sample(0, self.dmap_width)
+            y = np.random.sample(0, self.dmap_height)
+            if self.discretize_map[x, y] is 0:  # TODO: find the threshold value, -1 is occupied
+                return (x, y)
+
+    def find_nearest_leaf(self, x_rand, tree):
+        nearest = -1
+        dist    = 0
+        min_dist= np.inf
+
+        for leaf in tree:
+            dist = leaf[0] - x_rand  # delta
+            dist = dist.dot(dist)    # distance
+            if dist<min_dist and dist>0:  # avoid sample point overlaps
+                min_dist = dist
+                nearest = tree.index(leaf)
+
+        assert nearest > 0, "fail to find nearest leaf"
+        return nearest
+
+    def steer(self, x_rand, leaf_nearest, delta):
+        # x_rand and leaf_nearest decide direction of vector, delta is the norm
+        # TODO: include dynamics, making traj smoother
+        diff = x_rand - leaf_nearest
+        direction = diff / np.sqrt(diff.dot(diff))  # normalization
+        return leaf_nearest + delta*direction
+
+    def obstacle_free(self, pointA, pointB):
+        """
+        check if there is an obstacle between A and B"""
+        pass
 
 if __name__=="__main__":
     rospy.init_node("path_planning")

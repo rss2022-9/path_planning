@@ -158,6 +158,9 @@ class PathPlan(object):
                     score[node] = temp_cost + heuristic_func(node, goal)
                     if node not in open:
                         open.add(node)
+
+    def rapidly_random_tree(self, start, goal):
+        pass
     
     def get_neighbors(self, node):
         #Add the 8 adjacent cells (vertical, horizontal, and diagonal) to the set of neighbors

@@ -24,6 +24,7 @@ class PathPlan(object):
         self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb)
 
         self.box_size = 5 #Determines how granular to discretize the data
+        self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
 
         self.map_ready = False
         self.start_ready = False
@@ -114,12 +115,10 @@ class PathPlan(object):
             discretized_start = (int(start_pixel[1]//self.box_size), int(start_pixel[0]//self.box_size))
             discretized_goal = (int(goal_pixel[1]//self.box_size), int(goal_pixel[0]//self.box_size))
 
-            rospy.loginfo(discretized_start)
+            #Run A* using the discretized start and goal
+            path = self.A_star(discretized_start, discretized_goal)
+            rospy.loginfo(path)
 
-            #Run A* using the discretized start, goal, and map
-            self.A_star(discretized_start, discretized_goal, map)
-
-            #TODO: Run A*
             #TODO: Convert the results of A* to meters + transform to map frame
 
             # publish trajectory
@@ -128,21 +127,66 @@ class PathPlan(object):
             # visualize trajectory Markers
             self.trajectory.publish_viz()
 
-    def A_star(self, start, goal, map):
-        heuristic = lambda start, goal: math.sqrt((start[0] - goal[0])**2 + (start[1] - goal[1])**2)
-        open = {start}
-        segments = {}
-        cost = {start: 0}
-        score = {start: heuristic(start, goal)}
+    def A_star(self, start, goal):
+        #Heuristic function based on the straight line distance from start to goal
+        heuristic_func = lambda start, goal: math.sqrt((start[0] - goal[0])**2 + (start[1] - goal[1])**2)
+        #Cost function of 1 to move to an unoccupied cell, infinity to moved to an occupied one
+        cost_func = lambda node: 1 if self.map_data[node[0],node[1]] < self.occupied_threshold else np.inf
+        
+        open = {start} #Set of nodes discovered so far
+        segments = {} #Map of nodes to the prior node they were found by (used for path reconstruction)
+        cost = {start: 0} #Cost of the path to each node so far
+        score = {start: heuristic_func(start, goal)} #Cost of the path to each node + heuristic for remaining distance
 
         while open:
-            curr = min(score, key=score.get)
+            #Get the min score node
+            curr = min(open, key=score.get)
+
+            #If the node is the goal node, reconstruct the path
             if curr == goal:
                 return self.get_path(segments, curr)
 
-    def get_path(self, segments, node):
-        pass
+            #Explore the neighbors of the current node
+            open.remove(curr)
+            for node in self.get_neighbors(curr):
+                node = tuple(node)
+                #If the path to this node is min cost so far, record it
+                temp_cost = cost.get(curr, np.inf) + cost_func(node)
+                if temp_cost < cost.get(node, np.inf):
+                    segments[node] = curr
+                    cost[node] = temp_cost
+                    score[node] = temp_cost + heuristic_func(node, goal)
+                    if node not in open:
+                        open.add(node)
+    
+    def get_neighbors(self, node):
+        #Add the 8 adjacent cells (vertical, horizontal, and diagonal) to the set of neighbors
+        neighbors = np.array([
+            (node[0]+1, node[1]+1),
+            (node[0]+1, node[1]),
+            (node[0]+1, node[1]-1),
+            (node[0], node[1]+1),
+            (node[0], node[1]-1),
+            (node[0]-1, node[1]+1),
+            (node[0]-1, node[1]),
+            (node[0]-1, node[1]-1)])
+        
+        #Filter any neighbors that are out of the map
+        neighbors = neighbors[neighbors[:,0] >= 0]
+        neighbors = neighbors[neighbors[:,0] < self.map_height]
+        neighbors = neighbors[neighbors[:,1] >= 0]
+        neighbors = neighbors[neighbors[:,1] < self.map_width]
 
+        return neighbors
+
+
+    def get_path(self, segments, node):
+        path = [node]
+        while node in segments.keys():
+            node = segments[node]
+            path.append(node)
+        path.reverse()
+        return path
 
 if __name__=="__main__":
     rospy.init_node("path_planning")

@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from curses.textpad import rectangle
+from operator import index
 from turtle import left
 from sklearn import tree
 import rospy
@@ -28,7 +30,10 @@ class PathPlan(object):
         self.box_size = 10 #Determines how granular to discretize the data
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
 
-        self.delta = 0.5 # steer delta
+        # parameters for RRT
+        self.max_distance = 2.0   # max distance from new node to old node, unit in pixel
+        self.car_to_pixel = 1     # car width in pixel unit, used for collision detection
+        self.target_range = 5     # close in L1 norm of the target, then finish RRT
 
         self.map_ready = False
         self.start_ready = False
@@ -118,6 +123,7 @@ class PathPlan(object):
 
             #Run A* using the discretized start and goal
             uv_path = self.A_star(discretized_start, discretized_goal)
+            # uv_path = self.RRT_search(discretized_start, discretized_goal)
 
             #Convert path from (u,v) pixels to (x,y) coordinates in the map frame
             xy_path = []
@@ -226,20 +232,21 @@ class PathPlan(object):
 
     def RRT_search(self, start, goal):
 
-        tree = []
-        root = (start, -1) # each leaf contains position and parent index
+        tree = []   # define leaf: each leaf contains position and parent index
+        root = (start, -1) 
         tree.append(root)
         
         while True:
             x_rand       = self.rand_sample()                    # randomly sample new point
             leaf_nearest = self.find_nearest_leaf(x_rand, tree)  # find the nearest leaf(index) to sampled point
-            leaf_new     = self.steer(x_rand, tree[leaf_nearest], self.delta)      # setup new leaf pos, we don't want to go too far and have the obstacle. Also possible to include dynamic?
+            leaf_new     = self.steer(x_rand, tree[leaf_nearest][0], self.max_distance)      # setup new leaf pos, we don't want to go too far and have the obstacle. Also possible to include dynamic?
 
-            if self.obstacle_free(tree[leaf_nearest], leaf_new):
-                leaf_new = (leaf_new, leaf_nearest)  # pos and parent
-                tree.append(leaf_new)
-                if leaf_new == goal:
-                    return self.get_path()           # TODO: check compatibility
+            if self.obstacle_free(tree[leaf_nearest][0], leaf_new):
+                leaf_tup = (leaf_new, leaf_nearest)  # pos and parent
+                tree.append(leaf_tup)
+                diff = leaf_new-goal
+                if diff.dot(diff) < self.target_range**2:
+                    return self.get_RRT_path()
  
     def rand_sample(self):
         # randomly sample point in the map
@@ -247,7 +254,9 @@ class PathPlan(object):
         while True:
             x = np.random.sample(0, self.dmap_width)
             y = np.random.sample(0, self.dmap_height)
-            if self.discretize_map[x, y] is 0:  # TODO: find the threshold value, -1 is occupied
+            x = np.round(x)
+            y = np.round(y)
+            if self.discretize_map[x, y] >= 0 and self.discretize_map[x,y] < self.occupied_threshold:  # grid is defined and unoccupied
                 return (x, y)
 
     def find_nearest_leaf(self, x_rand, tree):
@@ -269,13 +278,34 @@ class PathPlan(object):
         # x_rand and leaf_nearest decide direction of vector, delta is the norm
         # TODO: include dynamics, making traj smoother
         diff = x_rand - leaf_nearest
+        if diff.dot(diff) < self.max_distance**2:
+            return x_rand
         direction = diff / np.sqrt(diff.dot(diff))  # normalization
         return leaf_nearest + delta*direction
 
     def obstacle_free(self, pointA, pointB):
         """
         check if there is an obstacle between A and B"""
-        pass
+        # TODO: current version is very conservative using box of A-B as constraint (similar to AABB algorithm)
+        x_min = pointA[0] if pointA[0] < pointB[0] else pointB[0]
+        x_max = pointA[0] if pointA[0] > pointB[0] else pointB[0]
+        y_min = pointA[1] if pointA[1] < pointB[1] else pointB[1]
+        y_max = pointA[1] if pointA[1] > pointB[1] else pointB[1]
+        rectangle = self.map_data[x_min:x_max, y_min:y_max]
+        if np.max(rectangle) > self.occupied_threshold or np.min(rectangle) < 0:  # ocupied or undefined
+            return False
+        else:
+            return True
+
+    def get_RRT_path(self, tree):
+        path = []
+        index = len(tree) - 1  # start from the goal
+
+        while index != -1:
+            path.append(tree[index][0])
+            index = tree[index][1]   # parent index
+        path.reverse()
+        return path
 
 if __name__=="__main__":
     rospy.init_node("path_planning")

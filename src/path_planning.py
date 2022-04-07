@@ -8,6 +8,7 @@ import rospy
 import numpy as np
 import tf
 from geometry_msgs.msg import PoseStamped, PoseArray, Point
+from visualization_msgs.msg import Marker
 from nav_msgs.msg import Odometry, OccupancyGrid
 import rospkg
 import time, os
@@ -27,11 +28,13 @@ class PathPlan(object):
         self.traj_pub = rospy.Publisher("/trajectory/current", PoseArray, queue_size=10)
         self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb)
 
-        self.box_size = 10 #Determines how granular to discretize the data
+        self.algorithm = "A_star" # which search algorithm to use "A_star" and "RRT"
+
+        self.box_size = 1 # Determines how granular to discretize the data, A* default = 10
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
 
         # parameters for RRT
-        self.max_distance = 2.0   # max distance from new node to old node, unit in pixel
+        self.max_distance = 20   # max distance from new node to old node, unit in pixel
         self.car_to_pixel = 1     # car width in pixel unit, used for collision detection
         self.target_range = 5     # close in L1 norm of the target, then finish RRT
 
@@ -121,9 +124,12 @@ class PathPlan(object):
             discretized_start = self.xy_to_discretized(start_point)
             discretized_goal = self.xy_to_discretized(goal_point)
 
-            #Run A* using the discretized start and goal
-            uv_path = self.A_star(discretized_start, discretized_goal)
-            # uv_path = self.RRT_search(discretized_start, discretized_goal)
+            #Run search algorithm using the discretized start and goal
+            rospy.loginfo(self.algorithm + " is starting planning")
+            if self.algorithm is "RRT":
+                uv_path = self.RRT_search(discretized_start, discretized_goal)
+            else:
+                uv_path = self.A_star(discretized_start, discretized_goal)
 
             #Convert path from (u,v) pixels to (x,y) coordinates in the map frame
             xy_path = []
@@ -232,47 +238,67 @@ class PathPlan(object):
 
     def RRT_search(self, start, goal):
 
-        tree = []   # define leaf: each leaf contains position and parent index
-        root = (start, -1) 
-        tree.append(root)
+        tree_pos = []      # position of each leaf 
+        tree_parent = []   # parent of each leaf
+        tree = {"pos":tree_pos, "parent":tree_parent}
+        start = np.array(start)
+        goal = np.array(goal)
+        tree_pos.append(start)
+        tree_parent.append(-1)
         
         while True:
-            x_rand       = self.rand_sample()                    # randomly sample new point
-            leaf_nearest = self.find_nearest_leaf(x_rand, tree)  # find the nearest leaf(index) to sampled point
-            leaf_new     = self.steer(x_rand, tree[leaf_nearest][0], self.max_distance)      # setup new leaf pos, we don't want to go too far and have the obstacle. Also possible to include dynamic?
+            x_rand  = self.rand_sample()                    # randomly sample new point
+            nearest = self.find_nearest_leaf(x_rand, tree_pos)  # find the nearest leaf(index) to sampled point
+            if nearest == -1:
+                continue
+            leaf_new = self.steer(x_rand, tree_pos[nearest], self.max_distance)      # setup new leaf pos, we don't want to go too far and have the obstacle. Also possible to include dynamic?
 
-            if self.obstacle_free(tree[leaf_nearest][0], leaf_new):
-                leaf_tup = (leaf_new, leaf_nearest)  # pos and parent
-                tree.append(leaf_tup)
+            if self.obstacle_free(tree_pos[nearest], leaf_new):
+                tree_pos.append(leaf_new)
+                tree_parent.append(nearest)
                 diff = leaf_new-goal
+                self.trajectory.publish_RRT_edge(leaf_new, tree_pos[nearest])
                 if diff.dot(diff) < self.target_range**2:
-                    return self.get_RRT_path()
+                    return self.get_RRT_path(tree)
  
     def rand_sample(self):
         # randomly sample point in the map
         # TODO: setup voronoi bias in the future
         while True:
-            x = np.random.sample(0, self.dmap_width)
-            y = np.random.sample(0, self.dmap_height)
-            x = np.round(x)
-            y = np.round(y)
-            if self.discretize_map[x, y] >= 0 and self.discretize_map[x,y] < self.occupied_threshold:  # grid is defined and unoccupied
-                return (x, y)
+            col = np.random.random_sample()*(self.dmap_width-1)  # col
+            row = np.random.random_sample()*(self.dmap_height-1) # row
+            col = int(np.round(col))
+            row = int(np.round(row))
+            if self.map_data[row, col] >= 0 and self.map_data[row,col] < self.occupied_threshold:  # grid is defined and unoccupied
+                return np.array([row, col])
 
-    def find_nearest_leaf(self, x_rand, tree):
-        nearest = -1
-        dist    = 0
-        min_dist= np.inf
+    def find_nearest_leaf(self, x_rand, tree_pos):
 
-        for leaf in tree:
-            dist = leaf[0] - x_rand  # delta
-            dist = dist.dot(dist)    # distance
-            if dist<min_dist and dist>0:  # avoid sample point overlaps
-                min_dist = dist
-                nearest = tree.index(leaf)
+        diff = x_rand - np.array(tree_pos)
+        square = diff*diff  # element multiplication
+        square_distance = np.sum(square, axis=1)
+        min_val = np.min(square_distance)
+        if min_val > 4:                          # avoid sample point overlaps, discretized map, at least two step forward
+            min_ind = np.where(square_distance==min_val)
+            # rospy.loginfo(min_ind)
+            return min_ind[0][-1]                # prefer to newest point
+        else:
+            return -1
+        # nearest = -1
+        # dist    = 0
+        # min_dist= np.inf
 
-        assert nearest > 0, "fail to find nearest leaf"
-        return nearest
+        # for leaf in tree_pos:
+        #     rospy.loginfo(leaf)
+        #     dist = leaf - x_rand  # delta
+        #     dist = dist.dot(dist)    # distance square
+        #     if dist<min_dist and dist>4:  # avoid sample point overlaps, discretized map, at least two step forward
+        #         min_dist = dist
+        #         nearest = tree_pos.index(leaf)
+
+        # # assert nearest > 0, "fail to find nearest leaf"
+        # rospy.loginfo(nearest)
+        # return nearest
 
     def steer(self, x_rand, leaf_nearest, delta):
         # x_rand and leaf_nearest decide direction of vector, delta is the norm
@@ -281,7 +307,8 @@ class PathPlan(object):
         if diff.dot(diff) < self.max_distance**2:
             return x_rand
         direction = diff / np.sqrt(diff.dot(diff))  # normalization
-        return leaf_nearest + delta*direction
+        x_new = np.round(leaf_nearest + delta*direction)
+        return x_new.astype(int)
 
     def obstacle_free(self, pointA, pointB):
         """
@@ -291,7 +318,12 @@ class PathPlan(object):
         x_max = pointA[0] if pointA[0] > pointB[0] else pointB[0]
         y_min = pointA[1] if pointA[1] < pointB[1] else pointB[1]
         y_max = pointA[1] if pointA[1] > pointB[1] else pointB[1]
+        x_min = int(np.round(x_min))
+        x_max = int(np.round(x_max))+1
+        y_min = int(np.round(y_min))
+        y_max = int(np.round(y_max))+1
         rectangle = self.map_data[x_min:x_max, y_min:y_max]
+        # rospy.loginfo(rectangle.shape)
         if np.max(rectangle) > self.occupied_threshold or np.min(rectangle) < 0:  # ocupied or undefined
             return False
         else:
@@ -299,11 +331,13 @@ class PathPlan(object):
 
     def get_RRT_path(self, tree):
         path = []
-        index = len(tree) - 1  # start from the goal
+        pos = tree["pos"]
+        parent = tree["parent"]
+        index = len(parent) - 1  # start from the goal
 
-        while index != -1:
-            path.append(tree[index][0])
-            index = tree[index][1]   # parent index
+        while index != -1:          # end when meeting first node
+            path.append(pos[index])
+            index = parent[index]   # parent index
         path.reverse()
         return path
 

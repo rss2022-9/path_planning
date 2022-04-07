@@ -30,6 +30,7 @@ class LineTrajectory(object):
             self.start_pub = rospy.Publisher(viz_namespace + "/start_point", Marker, queue_size = 1)
             self.traj_pub  = rospy.Publisher(viz_namespace + "/path", Marker, queue_size = 1)
             self.end_pub   = rospy.Publisher(viz_namespace + "/end_pose", Marker, queue_size = 1)
+            self.RRT_pub   = rospy.Publisher(viz_namespace + "/RRT_edge", Marker, queue_size = 10)
 
     # compute the distances along the path for all path segments beyond those already computed
     def update_distances(self):
@@ -212,6 +213,40 @@ class LineTrajectory(object):
                 marker.action = marker.DELETE
             self.traj_pub.publish(marker)
             print('publishing traj')
+        elif self.traj_pub.get_num_connections() == 0:
+            print "Not publishing trajectory, no subscribers"
+
+    # TODO: not publish the line correctly
+    def publish_RRT_edge(self, pointA, pointB, duration=0.0):
+        """
+        given two points, pub their edge, used for RRT tree visualization"""
+        if self.visualize and self.RRT_pub.get_num_connections() > 0:
+            print "Publishing RRT tree"
+            marker = Marker()
+            marker.header = self.make_header("/map")
+            marker.ns = self.viz_namespace + "/RRT"
+            marker.id = 3
+            marker.type = marker.LINE_LIST # line strip
+            marker.lifetime = rospy.Duration.from_sec(duration)
+            
+            point_list = [pointA, pointB]
+            marker.action = marker.ADD
+            marker.scale.x = 0.3     # line width
+            # marker.color.r = 1.0
+            # marker.color.g = 1.0
+            marker.color.b = 1.0
+            marker.color.a = 1.0
+            for p in point_list:
+                pt = Point32()
+                pt.x = p[0]
+                pt.y = p[1]
+                pt.z = 0.0
+                marker.points.append(pt)
+            else:
+                # delete
+                marker.action = marker.DELETE
+            self.RRT_pub.publish(marker)
+            print('publishing RRT edge done')
         elif self.traj_pub.get_num_connections() == 0:
             print "Not publishing trajectory, no subscribers"
 

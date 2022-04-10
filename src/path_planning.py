@@ -30,7 +30,7 @@ class PathPlan(object):
 
         self.algorithm = "A_star" # which search algorithm to use "A_star" and "RRT"
 
-        self.box_size = 1 # Determines how granular to discretize the data, A* default = 10
+        self.box_size = 4 # Determines how granular to discretize the data, A* default = 10
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
 
         # parameters for RRT

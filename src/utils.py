@@ -216,11 +216,11 @@ class LineTrajectory(object):
         elif self.traj_pub.get_num_connections() == 0:
             print "Not publishing trajectory, no subscribers"
 
-    # TODO: not publish the line correctly
+    # TODO: not publish the line
     def publish_RRT_edge(self, pointA, pointB, duration=0.0):
         """
         given two points, pub their edge, used for RRT tree visualization"""
-        if self.visualize and self.RRT_pub.get_num_connections() > 0:
+        if self.visualize: #and self.RRT_pub.get_num_connections() > 0:
             print "Publishing RRT tree"
             marker = Marker()
             marker.header = self.make_header("/map")

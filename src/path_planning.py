@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 
-from curses.textpad import rectangle
-from operator import index
-from turtle import left
-from sklearn import tree
 import rospy
 import numpy as np
 import tf
@@ -32,6 +28,7 @@ class PathPlan(object):
 
         self.box_size = 4 # Determines how granular to discretize the data, A* default = 10
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
+        self.padding_size = 4 #Amount of padding to add to walls when path planning (Max Value = 6 for Stata Basement)
 
         # parameters for RRT
         self.max_distance = 20   # max distance from new node to old node, unit in pixel
@@ -65,17 +62,25 @@ class PathPlan(object):
         self.map_data = self.discretize_map(self.map_height, self.map_width, np.array(msg.data))
         self.dmap_height, self.dmap_width = self.map_data.shape
 
-        rospy.loginfo(np.unique(msg.data))
-
         #Signal that the map has been loaded
         self.map_ready = True
+        rospy.loginfo("Map Loaded")
 
     def discretize_map(self, height, width, data):
-        #Replace all unknown grid spaces as fully occupied
-        data[data == -1] = 100
-
         #Turn the data into a 2D grid
         map_2d = data.reshape((height, width))
+        
+        # #Add a boundary to the map walls
+        map_2d_copy = map_2d.copy()
+        for row in range(self.padding_size, self.map_height - self.padding_size):
+            for col in range(self.padding_size, self.map_width - self.padding_size):
+                if map_2d_copy[row, col] > self.occupied_threshold:
+                    for i in range(-self.padding_size, self.padding_size + 1):
+                        for j in range(-self.padding_size, self.padding_size + 1):
+                            map_2d[row + i, col + j] = 100
+        
+        #Replace all unknown grid spaces as fully occupied
+        map_2d[map_2d == -1] = 100
 
         #Iterate through every nth row and nth column
         discretized_map_2d = np.zeros((height//self.box_size, width//self.box_size))
@@ -87,7 +92,7 @@ class PathPlan(object):
         
         #Note: For Stata Basement, the rows are from bottom to top (index 0 = bottom of map) because the
         #orientation of the map's origin is rotated 180 degrees over the z-axis. This should resolve
-        #itself when transforming the map frame (hopefully)
+        #itself when transforming the map frame
         return discretized_map_2d
 
     def odom_cb(self, msg):
@@ -113,6 +118,7 @@ class PathPlan(object):
 
             #Signal that the goal position has been loaded
             self.goal_ready = True
+            rospy.loginfo("Goal point set")
 
             #Attempt to plan a path
             self.plan_path(self.start_point, self.goal_point, self.map_data)
@@ -131,22 +137,28 @@ class PathPlan(object):
             else:
                 uv_path = self.A_star(discretized_start, discretized_goal)
 
-            #Convert path from (u,v) pixels to (x,y) coordinates in the map frame
-            xy_path = []
-            for coord in uv_path:
-                xy_coord = self.discretized_to_xy(coord)
-                xy_path.append(xy_coord)
+            if uv_path is not None:
+                #Convert path from (u,v) pixels to (x,y) coordinates in the map frame
+                xy_path = []
+                for coord in uv_path:
+                    xy_coord = self.discretized_to_xy(coord)
+                    xy_path.append(xy_coord)
 
-                point = Point()
-                point.x = xy_coord[0]
-                point.y = xy_coord[1]
-                self.trajectory.addPoint(point)
+                    point = Point()
+                    point.x = xy_coord[0]
+                    point.y = xy_coord[1]
+                    self.trajectory.addPoint(point)
 
-            # publish trajectory
-            self.traj_pub.publish(self.trajectory.toPoseArray())
+                # publish trajectory
+                self.traj_pub.publish(self.trajectory.toPoseArray())
 
-            # visualize trajectory Markers
-            self.trajectory.publish_viz()
+                # visualize trajectory Markers
+                self.trajectory.publish_viz()
+
+                #Wait for a new goal position to be set
+                self.goal_ready = False
+            else:
+                rospy.loginfo("No path found")
 
     def xy_to_discretized(self, coord):
         #Get the rotation matrix from the map frame to the image frame
@@ -180,7 +192,7 @@ class PathPlan(object):
         #Heuristic function based on the straight line distance from start to goal
         heuristic_func = lambda start, goal: math.sqrt((start[0] - goal[0])**2 + (start[1] - goal[1])**2)
         #Cost function of 1 to move to an unoccupied cell, infinity to moved to an occupied one
-        cost_func = lambda node: 1 if self.map_data[node[0],node[1]] < self.occupied_threshold else np.inf
+        cost_func = lambda node1, node2: heuristic_func(node1, node2) if self.map_data[node2[0],node2[1]] < self.occupied_threshold else np.inf
         
         open = {start} #Set of nodes discovered so far
         segments = {} #Map of nodes to the prior node they were found by (used for path reconstruction)
@@ -193,14 +205,14 @@ class PathPlan(object):
 
             #If the node is the goal node, reconstruct the path
             if curr == goal:
-                return self.get_path(segments, curr)
+                return self.get_A_star_path(segments, curr)
 
             #Explore the neighbors of the current node
             open.remove(curr)
             for node in self.get_neighbors(curr):
                 node = tuple(node)
                 #If the path to this node is min cost so far, record it
-                temp_cost = cost.get(curr, np.inf) + cost_func(node)
+                temp_cost = cost.get(curr, np.inf) + cost_func(curr, node)
                 if temp_cost < cost.get(node, np.inf):
                     segments[node] = curr
                     cost[node] = temp_cost
@@ -228,7 +240,7 @@ class PathPlan(object):
 
         return neighbors
 
-    def get_path(self, segments, node):
+    def get_A_star_path(self, segments, node):
         path = [node]
         while node in segments.keys():
             node = segments[node]

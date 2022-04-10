@@ -26,7 +26,7 @@ class PathPlan(object):
 
         self.algorithm = "A_star" # which search algorithm to use "A_star" and "RRT"
 
-        self.box_size = 5 # Determines how granular to discretize the data, A* default = 5
+        self.box_size = 2 # Determines how granular to discretize the data, A* default = 10
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
         self.padding_size = 4 #Amount of padding to add to walls when path planning (Max Value = 6 for Stata Basement)
 
@@ -106,7 +106,7 @@ class PathPlan(object):
             self.start_ready = True
 
             #Attempt to plan a path
-            self.plan_path(self.start_point, self.goal_point, self.map_data)
+            # self.plan_path(self.start_point, self.goal_point, self.map_data)
 
 
     def goal_cb(self, msg):

@@ -26,9 +26,9 @@ class PathPlan(object):
 
         self.algorithm = "A_star" # which search algorithm to use "A_star" and "RRT"
 
-        self.box_size = 2 # Determines how granular to discretize the data, A* default = 10
+        self.box_size = 5 # Determines how granular to discretize the data, A* default = 10
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
-        self.padding_size = 4 #Amount of padding to add to walls when path planning (Max Value = 6 for Stata Basement)
+        self.padding_size = 5 #Amount of padding to add to walls when path planning (Max Value = 6 for Stata Basement)
 
         # parameters for RRT
         self.max_distance = 20   # max distance from new node to old node, unit in pixel
@@ -48,7 +48,6 @@ class PathPlan(object):
 
         self.start_point = None
         self.goal_point = None
-
 
     def map_cb(self, msg):
         #Extract all the info from the map message
@@ -78,7 +77,7 @@ class PathPlan(object):
                     for i in range(-self.padding_size, self.padding_size + 1):
                         for j in range(-self.padding_size, self.padding_size + 1):
                             map_2d[row + i, col + j] = 100
-        
+
         #Replace all unknown grid spaces as fully occupied
         map_2d[map_2d == -1] = 100
 

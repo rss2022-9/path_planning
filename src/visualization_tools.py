@@ -40,3 +40,41 @@ class VisualizationTools:
 
         # Publish the line
         publisher.publish(line_strip)
+
+    @staticmethod
+    def plot_point(x, y, publisher, color = (1., 0., 0.), frame = "/base_link"):
+        """
+        Publishes the points (x, y) to publisher
+        so they can be visualized in rviz as
+        connected line segments.
+        Args:
+            x, y: The x and y values. These arrays
+            must be of the same length.
+            publisher: the publisher to publish to. The
+            publisher must be of type Marker from the
+            visualization_msgs.msg class.
+            color: the RGB color of the plot.
+            frame: the transformation frame to plot in.
+        """
+        # Construct a line
+        point = Marker()
+        point.type = Marker.POINTS
+        point.header.frame_id = frame
+
+        # Set the size and color
+        point.scale.x = 0.1
+        point.scale.y = 0.1
+        point.color.a = 1.
+        point.color.r = color[0]
+        point.color.g = color[1]
+        point.color.g = color[2]
+
+        # Fill the line with the desired values
+        p = Point()
+        p.x = x
+        p.y = y
+        point.points.append(p)
+
+        # Publish the line
+        publisher.publish(point)
+        

@@ -72,22 +72,24 @@ class PurePursuit(object):
         last_but_index = path_points.shape[0]-2
         last_index = path_points.shape[0]-1
         final_point = path_points[last_index,:]
-        if not (self.started and (self.cur_point_index >= last_but_index)): # don't bother if we're on the last segment
-            P1 = path_points[:-1,:]
-            P2 = path_points[1:,:]
-            P3 = car_pose
-            LVEC = P2 - P1
-            norm = np.linalg.norm(LVEC,axis=1) 
-            t = np.einsum('ij,ij->i',LVEC,P3-P1)/(norm**2) # np.dot doesn't have an axis input so you have to do this wonky thing
-            t = np.clip(t,0,1)
-            min_vecs = P1 + t[:,np.newaxis]*LVEC
-            min_vecs = min_vecs - P3
-            distances = np.linalg.norm(min_vecs,axis=1)
-            start_ind = np.argmin(distances)
-            final_ind = start_ind + 1
+        
+        P1 = path_points[:-1,:]
+        P2 = path_points[1:,:]
+        P3 = car_pose
+        LVEC = P2 - P1
+        norm = np.linalg.norm(LVEC,axis=1) 
+        t = np.einsum('ij,ij->i',LVEC,P3-P1)/(norm**2) # np.dot doesn't have an axis input so you have to do this wonky thing
+        t = np.clip(t,0,1)
+        min_vecs = P1 + t[:,np.newaxis]*LVEC
+        min_vecs = min_vecs - P3
+        distances = np.linalg.norm(min_vecs,axis=1)
+        start_ind = np.argmin(distances)
+        final_ind = start_ind + 1
+        self.cur_point_index = start_ind
+         
+        if  (start_ind!=last_but_index): # don't bother if we're on the last segment
             point1 = path_points[start_ind,:]
             point2 = path_points[final_ind,:]
-            self.cur_point_index = start_ind
             self.next_mark = final_ind
             self.started = True
             
@@ -98,9 +100,8 @@ class PurePursuit(object):
             mag = np.linalg.norm(nextpoint-car_pose)
             if mag < self.lookahead:
                 next_mark = np.argmin(mag<self.lookahead) + next_mark
-                if (next_mark + 1 < len(path_points)):
-                    point1 = path_points[next_mark,:]
-                    point2 = path_points[next_mark+1,:]
+                point1 = path_points[next_mark,:]
+                point2 = path_points[next_mark+1,:]
             self.point1 = point1
             self.point2 = point2
 

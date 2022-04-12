@@ -22,7 +22,9 @@ class PurePursuit(object):
         self.odom_topic = rospy.get_param("~odom_topic")
         self.trajectory = utils.LineTrajectory("/followed_trajectory")
         point_topic = "/pp/point"
-        self.line_pub = rospy.Publisher(point_topic, Marker, queue_size=1)
+        line_topic = "/pp/line"
+        self.point_pub = rospy.Publisher(point_topic, Marker, queue_size=1)
+        self.line_pub = rospy.Publisher(line_topic, Marker, queue_size=1)
         self.drive_pub = rospy.Publisher("/drive", AckermannDriveStamped, queue_size=1)
         
         self.traj_sub = rospy.Subscriber("/trajectory/current", PoseArray, self.trajectory_callback, queue_size=1)
@@ -32,10 +34,13 @@ class PurePursuit(object):
         self.speed            = 10.
         self.wheelbase_length = 0.325
         self.DIST_THRESH = 0.01
-        self.num_samples = 100
+        self.num_samples_add = 100
         self.path_points_set = False
         self.path_points  = None
         self.next_mark = None
+        self.cur_point_index = None
+        self.point1 = None
+        self.point2 = None
         self.started = False
         
     def trajectory_callback(self, msg):
@@ -50,7 +55,7 @@ class PurePursuit(object):
         x_up,y_up = self.populateLine(x,y) # stack overflow code to upsample I don't understand it and you don't have to
         self.path_points = np.transpose(np.array([x_up,y_up])) # Upsampled values are the new path points
         self.path_points_set = self.path_points is not None
-        self.trajectory.publish_viz(duration=3000.0)
+        self.trajectory.publish_viz(duration=0.0)
         return
         
     def find_target(self, car_pose, car_ang):
@@ -59,51 +64,61 @@ class PurePursuit(object):
         # code for single segment here -> https://stackoverflow.com/questions/849211/shortest-distance-between-a-point-and-a-line-segment/1501725#1501725
         # below is the same concept but vectorized
         path_points = self.path_points
-        P1 = path_points[:-1,:]
-        P2 = path_points[1:,:]
-        P3 = car_pose
-        LVEC = P2 - P1
-        norm = np.linalg.norm(LVEC,axis=1) 
-        t = np.einsum('ij,ij->i',LVEC,P3-P1)/(norm**2) # np.dot doesn't have an axis input so you have to do this wonky thing
-        t = np.clip(t,0,1)
-        min_vecs = P1 + t[:,np.newaxis]*LVEC
-        min_vecs = min_vecs - P3
-        distances = np.linalg.norm(min_vecs,axis=1)
-        start_ind = np.argmin(distances)
-        final_ind = start_ind + 1
-        point1 = path_points[start_ind,:]
-        point2 = path_points[final_ind,:]
-        self.next_mark = final_ind
+        last_but_index = path_points.shape[0]-2
+        last_index = path_points.shape[0]-1
+        final_point = path_points[last_index,:]
+        if not (self.started and (self.cur_point_index == last_but_index)): # don't bother if we're on the last segment
+            P1 = path_points[:-1,:]
+            P2 = path_points[1:,:]
+            P3 = car_pose
+            LVEC = P2 - P1
+            norm = np.linalg.norm(LVEC,axis=1) 
+            t = np.einsum('ij,ij->i',LVEC,P3-P1)/(norm**2) # np.dot doesn't have an axis input so you have to do this wonky thing
+            t = np.clip(t,0,1)
+            min_vecs = P1 + t[:,np.newaxis]*LVEC
+            min_vecs = min_vecs - P3
+            distances = np.linalg.norm(min_vecs,axis=1)
+            start_ind = np.argmin(distances)
+            final_ind = start_ind + 1
+            point1 = path_points[start_ind,:]
+            point2 = path_points[final_ind,:]
+            self.next_mark = final_ind
+            self.started = True
+            self.cur_point_index = start_ind
+
+            
+            # After finding closest segment check the furthers point within lookahead range
+            # if you find points make the last one the actual start of the path so you start curving to the right trajectory
+            next_mark = self.next_mark
+            nextpoint = path_points[next_mark,:]
+            mag = np.linalg.norm(nextpoint-car_pose)
+            if mag < self.lookahead:
+                next_mark = np.argmin(mag<self.lookahead) + next_mark
+                point1 = path_points[next_mark,:]
+                point2 = path_points[next_mark+1,:]
+            self.point1 = point1
+            self.point2 = point2
 
         # Stopping condition check is the end of the current path the last point?
         # Are you close enough to it?
-        last_index = path_points.shape[0]-1
-        if (final_ind == last_index and np.linalg.norm(point2-car_pose) <= 0.2):
+        mag_final = np.linalg.norm(final_point-car_pose)
+        if (self.cur_point_index == last_but_index) and (mag_final <= 0.2):
             speed_multi = 0.0
         else:
             speed_multi = 1.0
-
-        # After finding closest segment check the furthers point within lookahead range
-        # if you find points make the last one the actual start of the path so you start curving to the right trajectory
-        next_mark = self.next_mark
-        nextpoint = path_points[next_mark,:]
-        mag = np.linalg.norm(nextpoint-car_pose)
-        if mag < self.lookahead:
-            next_mark = np.argmin(mag<self.lookahead) + next_mark
-            point1 = path_points[next_mark,:]
-            point2 = path_points[next_mark+1,:]
-        
 
         # After fiding the right line segmennt you have start and end of line segment
         # find the interesection of the line and lookahead circle
         # code here -> https://codereview.stackexchange.com/questions/86421/line-segment-to-circle-collision-algorithm/86428#86428
         # below modified for arrays
+        P1 = self.point1
+        P2 = self.point2
         Q = car_pose
         r = self.lookahead
-        V = point2 - point1
+        V = P2 - P1
         a = np.dot(V,V)
-        b = 2*np.dot(V,point1-Q)
-        c = np.dot(point1,point1) + np.dot(Q,Q) - 2*np.dot(point1,Q) - r**2
+        b = 2*np.dot(V,P1-Q)
+        c = np.dot(P1,P1) + np.dot(Q,Q) - 2*np.dot(P1,Q) - r**2
         disc = b**2 - 4 * a * c
         if disc < 0:
             return None
@@ -111,7 +126,7 @@ class PurePursuit(object):
         t1 = (-b + sqrt_disc) / (2 * a)
         t2 = (-b - sqrt_disc) / (2 * a)
         t = max(t1,t2) # Larger value along line is the answer given the math should remain between 0 and 1 since we made sure every look ahead intersect is on a line
-        target = point1 + t*V
+        target = P1 + t*V # Gives the actual location of the intersection of interest in the world frame
 
         # Calculate relative target between car and target location
         # Math described here -> https://imgur.com/a/Z6lwoM7
@@ -121,7 +136,8 @@ class PurePursuit(object):
         mag = np.linalg.norm(rel_target)
         rel_ang = car_ang - ang
         rel_x =  mag*np.sin(rel_ang)
-        VisualizationTools.plot_point(target[0], target[1], self.line_pub, frame="/map")
+        VisualizationTools.plot_point(target[0], target[1], self.point_pub, frame="/map") # Visualize target point
+        VisualizationTools.plot_line(path_points[:,0], path_points[:,1], self.line_pub, frame="/map") # Visualize path
         return rel_x, speed_multi
 
     # Pure pursuit controller
@@ -153,7 +169,8 @@ class PurePursuit(object):
         distance = np.cumsum(np.sqrt( np.ediff1d(x, to_begin=0)**2 + np.ediff1d(y, to_begin=0)**2 ))
         distance = distance/distance[-1]
         fx, fy = interp1d( distance, x ), interp1d( distance, y )
-        alpha = np.linspace(0, 1, self.num_samples)
+        num_points = len(x) + abs(self.num_samples_add)
+        alpha = np.linspace(0, 1, num_points)
         x_regular, y_regular = fx(alpha), fy(alpha)
         return x_regular, y_regular
         

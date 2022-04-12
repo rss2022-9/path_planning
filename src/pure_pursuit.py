@@ -55,6 +55,11 @@ class PurePursuit(object):
         x_up,y_up = self.populateLine(x,y) # stack overflow code to upsample I don't understand it and you don't have to
         self.path_points = np.transpose(np.array([x_up,y_up])) # Upsampled values are the new path points
         self.path_points_set = self.path_points is not None
+        self.next_mark = None
+        self.cur_point_index = None
+        self.point1 = None
+        self.point2 = None
+        self.started = False
         self.trajectory.publish_viz(duration=0.0)
         return
         
@@ -67,7 +72,7 @@ class PurePursuit(object):
         last_but_index = path_points.shape[0]-2
         last_index = path_points.shape[0]-1
         final_point = path_points[last_index,:]
-        if not (self.started and (self.cur_point_index == last_but_index)): # don't bother if we're on the last segment
+        if not (self.started and (self.cur_point_index >= last_but_index)): # don't bother if we're on the last segment
             P1 = path_points[:-1,:]
             P2 = path_points[1:,:]
             P3 = car_pose
@@ -82,10 +87,9 @@ class PurePursuit(object):
             final_ind = start_ind + 1
             point1 = path_points[start_ind,:]
             point2 = path_points[final_ind,:]
+            self.cur_point_index = start_ind
             self.next_mark = final_ind
             self.started = True
-            self.cur_point_index = start_ind
-
             
             # After finding closest segment check the furthers point within lookahead range
             # if you find points make the last one the actual start of the path so you start curving to the right trajectory
@@ -94,15 +98,16 @@ class PurePursuit(object):
             mag = np.linalg.norm(nextpoint-car_pose)
             if mag < self.lookahead:
                 next_mark = np.argmin(mag<self.lookahead) + next_mark
-                point1 = path_points[next_mark,:]
-                point2 = path_points[next_mark+1,:]
+                if (next_mark + 1 < len(path_points)):
+                    point1 = path_points[next_mark,:]
+                    point2 = path_points[next_mark+1,:]
             self.point1 = point1
             self.point2 = point2
 
         # Stopping condition check is the end of the current path the last point?
         # Are you close enough to it?
         mag_final = np.linalg.norm(final_point-car_pose)
-        if (self.cur_point_index == last_but_index) and (mag_final <= 0.2):
+        if (self.cur_point_index >= last_but_index) and (mag_final <= 0.5):
             speed_multi = 0.0
         else:
             speed_multi = 1.0
@@ -156,7 +161,7 @@ class PurePursuit(object):
             drive_cmd.header.frame_id = 'base_link'
             drive_cmd.drive.speed = self.speed*speed_multi
             drive_cmd.drive.steering_angle = output
-            self.drive_pub.publish(drive_cmd)   
+            self.drive_pub.publish(drive_cmd)
         return
 
     def fromPoseArray(self, trajMsg):

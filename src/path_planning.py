@@ -17,13 +17,6 @@ class PathPlan(object):
     current car pose.
     """
     def __init__(self):
-        self.odom_topic = rospy.get_param("~odom_topic")
-        self.map_sub = rospy.Subscriber("/map", OccupancyGrid, self.map_cb)
-        self.trajectory = LineTrajectory("/planned_trajectory")
-        self.goal_sub = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self.goal_cb, queue_size=10)
-        self.traj_pub = rospy.Publisher("/trajectory/current", PoseArray, queue_size=10)
-        self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb)
-
         self.algorithm = "A_star" # which search algorithm to use "A_star" and "RRT"
 
         self.box_size = 5 # Determines how granular to discretize the data, A* default = 10
@@ -48,6 +41,13 @@ class PathPlan(object):
 
         self.start_point = None
         self.goal_point = None
+
+        self.odom_topic = rospy.get_param("~odom_topic")
+        self.map_sub = rospy.Subscriber("/map", OccupancyGrid, self.map_cb)
+        self.trajectory = LineTrajectory("/planned_trajectory")
+        self.goal_sub = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self.goal_cb, queue_size=10)
+        self.traj_pub = rospy.Publisher("/trajectory/current", PoseArray, queue_size=10)
+        self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb)
 
     def map_cb(self, msg):
         #Extract all the info from the map message
@@ -139,6 +139,7 @@ class PathPlan(object):
             if uv_path is not None:
                 #Convert path from (u,v) pixels to (x,y) coordinates in the map frame
                 xy_path = []
+                self.trajectory.clear()
                 for coord in uv_path:
                     xy_coord = self.discretized_to_xy(coord)
                     xy_path.append(xy_coord)

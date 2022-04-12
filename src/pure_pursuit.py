@@ -30,7 +30,7 @@ class PurePursuit(object):
         self.traj_sub = rospy.Subscriber("/trajectory/current", PoseArray, self.trajectory_callback, queue_size=1)
         self.move_car = rospy.Subscriber("/odom", Odometry, self.PPController, queue_size=1)
 
-        self.lookahead        = 2.0
+        self.lookahead        = 1.5
         self.speed            = 10.
         self.wheelbase_length = 0.325
         self.DIST_THRESH = 0.01

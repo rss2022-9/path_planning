@@ -21,7 +21,7 @@ class PathPlan(object):
 
         self.box_size = 5 # Determines how granular to discretize the data, A* default = 10
         self.occupied_threshold = 3 #Probability threshold to call a grid space occupied (0 to 100)
-        self.padding_size = 5 #Amount of padding to add to walls when path planning (Max Value = 6 for Stata Basement)
+        self.padding_size = 4 #Amount of padding to add to walls when path planning (Max Value = 6 for Stata Basement)
 
         # parameters for RRT
         self.max_distance = 20   # max distance from new node to old node, unit in pixel
@@ -65,6 +65,9 @@ class PathPlan(object):
         self.map_ready = True
         rospy.loginfo("Map Loaded")
 
+        #Attempt to plan a path
+        self.plan_path(self.start_point, self.goal_point, self.map_data)
+
     def discretize_map(self, height, width, data):
         #Turn the data into a 2D grid
         map_2d = data.reshape((height, width))
@@ -95,36 +98,36 @@ class PathPlan(object):
         return discretized_map_2d
 
     def odom_cb(self, msg):
-        if self.map_ready:
-            #Get the x and y position of the car from the odometry
-            start_x = msg.pose.pose.position.x
-            start_y = msg.pose.pose.position.y
-            self.start_point = np.array([start_x, start_y])
+        #Get the x and y position of the car from the odometry
+        start_x = msg.pose.pose.position.x
+        start_y = msg.pose.pose.position.y
+        self.start_point = np.array([start_x, start_y])
 
-            #Signal that the start position has been loaded
-            self.start_ready = True
+        #Signal that the start position has been loaded
+        self.start_ready = True
 
-            #Attempt to plan a path
-            # self.plan_path(self.start_point, self.goal_point, self.map_data)
-
+        #Attempt to plan a path
+        self.plan_path(self.start_point, self.goal_point, self.map_data)
 
     def goal_cb(self, msg):
-        if self.map_ready:
-            #Get the x and y position of the goal from the 2D Nav Goal
-            goal_x = msg.pose.position.x
-            goal_y = msg.pose.position.y
-            self.goal_point = np.array([goal_x, goal_y])
+        #Get the x and y position of the goal from the 2D Nav Goal
+        goal_x = msg.pose.position.x
+        goal_y = msg.pose.position.y
+        self.goal_point = np.array([goal_x, goal_y])
 
-            #Signal that the goal position has been loaded
-            self.goal_ready = True
-            rospy.loginfo("Goal point set")
+        #Signal that the goal position has been loaded
+        self.goal_ready = True
+        rospy.loginfo("Goal point set")
 
-            #Attempt to plan a path
-            self.plan_path(self.start_point, self.goal_point, self.map_data)
+        #Attempt to plan a path
+        self.plan_path(self.start_point, self.goal_point, self.map_data)
 
 
     def plan_path(self, start_point, goal_point, map):
         if self.map_ready and self.start_ready and self.goal_ready:
+            #Wait for a new goal position to be set
+            self.goal_ready = False
+
             #Convert the start and goal point into their discretized coordinates
             discretized_start = self.xy_to_discretized(start_point)
             discretized_goal = self.xy_to_discretized(goal_point)
@@ -154,9 +157,6 @@ class PathPlan(object):
 
                 # visualize trajectory Markers
                 self.trajectory.publish_viz()
-
-                #Wait for a new goal position to be set
-                self.goal_ready = False
             else:
                 rospy.loginfo("No path found")
 

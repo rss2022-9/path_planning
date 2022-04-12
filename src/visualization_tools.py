@@ -42,7 +42,7 @@ class VisualizationTools:
         publisher.publish(line_strip)
 
     @staticmethod
-    def plot_point(x, y, publisher, color = (1., 0., 0.), frame = "/base_link"):
+    def plot_point(x, y, publisher, color = (0., 1., 0.), frame = "/base_link"):
         """
         Publishes the points (x, y) to publisher
         so they can be visualized in rviz as

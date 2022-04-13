@@ -14,7 +14,7 @@ from visualization_tools import *
 class Safety:
     # topic parameters and variables
     scan_topic = rospy.get_param("~scan_topic", "/scan")
-    drive_topic = rospy.get_param("~drive_topic", "/drive")
+    drive_topic = rospy.get_param("~drive_topic", "/vesc/high_level/ackermann_cmd_mux/output")
     safety_topic = rospy.get_param("~safety_topic", "/vesc/low_level/ackermann_cmd_mux/input/safety")
 
     prev_velocity = 0
@@ -116,4 +116,3 @@ if __name__ == "__main__":
     rospy.init_node('safety')
     safety = Safety()
     rospy.spin()
-

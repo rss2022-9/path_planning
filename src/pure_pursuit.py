@@ -24,7 +24,7 @@ class PurePursuit(object):
         line_topic = "/pp/line"
         self.point_pub = rospy.Publisher(point_topic, Marker, queue_size=10)
         self.line_pub = rospy.Publisher(line_topic, Marker, queue_size=10)
-        self.drive_pub = rospy.Publisher("/vesc/high_level/ackermann_cmd_mux/input/nav_0", AckermannDriveStamped, queue_size=10)
+        self.drive_pub = rospy.Publisher("/vesc/low_level/ackermann_cmd_mux/input/navigation", AckermannDriveStamped, queue_size=10)
         self.lookahead        = 1.0
         self.speed            = 1.0
         self.wheelbase_length = 0.325
@@ -135,14 +135,11 @@ class PurePursuit(object):
         # Calculate relative target between car and target location
         # Math described here -> https://imgur.com/a/Z6lwoM7
         rel_target = target - car_pose
-        
         x, y = rel_target[0], rel_target[1]
         ang =  np.arctan2(y,x)
         mag = np.linalg.norm(rel_target)
         rel_ang = car_ang - ang
-        
         rel_x =  mag*np.sin(rel_ang)
-        
         VisualizationTools.plot_point(target[0], target[1], self.point_pub, frame="/map") # Visualize target point
         return rel_x, speed_multi
 
@@ -153,8 +150,6 @@ class PurePursuit(object):
             car_quat = [car_odom.pose.pose.orientation.x, car_odom.pose.pose.orientation.y, car_odom.pose.pose.orientation.z, car_odom.pose.pose.orientation.w]
             (roll, pitch, yaw) = euler_from_quaternion(car_quat)
             VisualizationTools.plot_line(self.path_points[:,0], self.path_points[:,1], self.line_pub, frame="/map") # Visualize path
-            #print(car_tran)
-            #exit()
             x, speed_multi= self.find_target(car_tran, yaw)
             
             tr = (self.lookahead**2)/(2*x) if x != 0 else 0 # Turning radius from relative x
@@ -165,10 +160,8 @@ class PurePursuit(object):
             drive_cmd.header.stamp = rospy.Time.now()
             drive_cmd.header.frame_id = 'base_link'
             drive_cmd.drive.speed = speed
-            print(speed,ang)
             drive_cmd.drive.steering_angle = output
             self.drive_pub.publish(drive_cmd)
-
         return
 
     def fromPoseArray(self, trajMsg):

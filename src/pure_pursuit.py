@@ -7,7 +7,6 @@ import utils
 import tf
 
 from tf.transformations import euler_from_quaternion
-
 from geometry_msgs.msg import PoseArray, PoseStamped
 from visualization_msgs.msg import Marker
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -19,29 +18,26 @@ class PurePursuit(object):
     """ Implements Pure Pursuit trajectory tracking with a fixed lookahead and speed.
     """
     def __init__(self):
-        self.odom_topic = rospy.get_param("~odom_topic", "/odom")
+        self.odom_topic = rospy.get_param("~odom_topic")
         self.trajectory = utils.LineTrajectory("/followed_trajectory")
         point_topic = "/pp/point"
         line_topic = "/pp/line"
-        self.point_pub = rospy.Publisher(point_topic, Marker, queue_size=1)
-        self.line_pub = rospy.Publisher(line_topic, Marker, queue_size=1)
-        self.drive_pub = rospy.Publisher("/drive", AckermannDriveStamped, queue_size=1)
-        
-        self.traj_sub = rospy.Subscriber("/trajectory/current", PoseArray, self.trajectory_callback, queue_size=1)
-        self.move_car = rospy.Subscriber(self.odom_topic, Odometry, self.PPController, queue_size=1)
-
-        self.lookahead        = 1.5
-        self.speed            = 10.
+        self.point_pub = rospy.Publisher(point_topic, Marker, queue_size=10)
+        self.line_pub = rospy.Publisher(line_topic, Marker, queue_size=10)
+        self.drive_pub = rospy.Publisher("/vesc/high_level/ackermann_cmd_mux/input/nav_0", AckermannDriveStamped, queue_size=10)
+        self.lookahead        = 1.0
+        self.speed            = 1.0
         self.wheelbase_length = 0.325
         self.DIST_THRESH = 0.01
-        self.num_samples_add = 100
+        self.num_samples_add = 200
         self.path_points_set = False
         self.path_points  = None
         self.next_mark = None
         self.cur_point_index = None
         self.point1 = None
         self.point2 = None
-        self.started = False
+        self.traj_sub = rospy.Subscriber("/trajectory/current", PoseArray, self.trajectory_callback, queue_size=10)
+        self.move_car = rospy.Subscriber("/pf/pose/odom", Odometry, self.PPController, queue_size=10)
         
     def trajectory_callback(self, msg):
         ''' Clears the currently followed trajectory, and loads the new one from the message
@@ -60,7 +56,7 @@ class PurePursuit(object):
         self.point1 = None
         self.point2 = None
         self.started = False
-        self.trajectory.publish_viz(duration=0.0)
+        self.trajectory.publish_viz(duration=1.0)
         return
         
     def find_target(self, car_pose, car_ang):
@@ -104,6 +100,7 @@ class PurePursuit(object):
                 point2 = path_points[next_mark+1,:]
             self.point1 = point1
             self.point2 = point2
+            
 
         # Stopping condition check is the end of the current path the last point?
         # Are you close enough to it?
@@ -122,6 +119,7 @@ class PurePursuit(object):
         Q = car_pose
         r = self.lookahead
         V = P2 - P1
+        
         a = np.dot(V,V)
         b = 2*np.dot(V,P1-Q)
         c = np.dot(P1,P1) + np.dot(Q,Q) - 2*np.dot(P1,Q) - r**2
@@ -137,13 +135,15 @@ class PurePursuit(object):
         # Calculate relative target between car and target location
         # Math described here -> https://imgur.com/a/Z6lwoM7
         rel_target = target - car_pose
+        
         x, y = rel_target[0], rel_target[1]
         ang =  np.arctan2(y,x)
         mag = np.linalg.norm(rel_target)
         rel_ang = car_ang - ang
+        
         rel_x =  mag*np.sin(rel_ang)
+        
         VisualizationTools.plot_point(target[0], target[1], self.point_pub, frame="/map") # Visualize target point
-        VisualizationTools.plot_line(path_points[:,0], path_points[:,1], self.line_pub, frame="/map") # Visualize path
         return rel_x, speed_multi
 
     # Pure pursuit controller
@@ -152,17 +152,23 @@ class PurePursuit(object):
             car_tran = [car_odom.pose.pose.position.x, car_odom.pose.pose.position.y]
             car_quat = [car_odom.pose.pose.orientation.x, car_odom.pose.pose.orientation.y, car_odom.pose.pose.orientation.z, car_odom.pose.pose.orientation.w]
             (roll, pitch, yaw) = euler_from_quaternion(car_quat)
+            VisualizationTools.plot_line(self.path_points[:,0], self.path_points[:,1], self.line_pub, frame="/map") # Visualize path
+            #print(car_tran)
+            #exit()
             x, speed_multi= self.find_target(car_tran, yaw)
-
+            
             tr = (self.lookahead**2)/(2*x) if x != 0 else 0 # Turning radius from relative x
             ang = -np.arctan(self.wheelbase_length/tr) # Angle from turning radius
+            speed = self.speed*speed_multi
             output = max(min(ang,0.34),-0.34)
             drive_cmd = AckermannDriveStamped()
             drive_cmd.header.stamp = rospy.Time.now()
             drive_cmd.header.frame_id = 'base_link'
-            drive_cmd.drive.speed = self.speed*speed_multi
+            drive_cmd.drive.speed = speed
+            print(speed,ang)
             drive_cmd.drive.steering_angle = output
             self.drive_pub.publish(drive_cmd)
+
         return
 
     def fromPoseArray(self, trajMsg):

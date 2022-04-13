@@ -188,6 +188,22 @@ class PathPlan(object):
 
         return tuple(xy)
 
+    @staticmethod
+    def discretized_to_xystatic(self, coord):
+        #Get the rotation matrix from the image frame to the map frame
+        quat_inverse = tf.transformations.quaternion_inverse([self.map_orientation.x, self.map_orientation.y, self.map_orientation.z, self.map_orientation.w])
+        rot_mat = tf.transformations.quaternion_matrix(quat_inverse)
+        rot_mat = np.array([[rot_mat[0,0], rot_mat[0,1]], [rot_mat[1,0], rot_mat[1,1]]])
+
+        #Get the xy value of the given coordinate
+        xy_untranslated = np.array([coord[1], coord[0]]) * self.box_size * self.map_resolution
+
+        #Translate and rotate the xy coordinate into the map frame
+        xy_translated = xy_untranslated - np.array([self.map_position.x, self.map_position.y])
+        xy = np.dot(rot_mat, xy_translated)
+
+        return tuple(xy)
+
     def A_star(self, start, goal):
         #Heuristic function based on the straight line distance from start to goal
         heuristic_func = lambda start, goal: math.sqrt((start[0] - goal[0])**2 + (start[1] - goal[1])**2)

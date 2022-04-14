@@ -1,5 +1,6 @@
 <launch>
 	<node pkg="lab6" type="pure_pursuit.py" name="Trajectory_follower" output="screen">
 		<param name="odom_topic" value="/pf/pose/odom"/>
+		<param name="drive_topic" value="/vesc/low_level/ackermann_cmd_mux/input/navigation"/>
 	</node>
 </launch>

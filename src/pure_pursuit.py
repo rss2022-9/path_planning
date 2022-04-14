@@ -9,6 +9,7 @@ import tf
 from tf.transformations import euler_from_quaternion
 from geometry_msgs.msg import PoseArray, PoseStamped
 from visualization_msgs.msg import Marker
+from std_msgs.msg import Float32
 from ackermann_msgs.msg import AckermannDriveStamped
 from scipy.interpolate import interp1d
 from visualization_tools import *
@@ -20,46 +21,32 @@ class PurePursuit(object):
     def __init__(self):
         odom_topic = rospy.get_param("~odom_topic", "/pf/pose/odom")
         drive_topic = rospy.get_param("~drive_topic", "/vesc/low_level/ackermann_cmd_mux/input/navigation")
-        self.trajectory = utils.LineTrajectory("/followed_trajectory")
         point_topic = "/pp/point"
         line_topic = "/pp/line"
+
+        self.trajectory = utils.LineTrajectory("/followed_trajectory")
         self.point_pub = rospy.Publisher(point_topic, Marker, queue_size=1)
         self.line_pub = rospy.Publisher(line_topic, Marker, queue_size=1)
         self.drive_pub = rospy.Publisher(drive_topic, AckermannDriveStamped, queue_size=1)
-        self.min_dist = rospy.Publisher("/pp/min_dist", Float32, queue_size=1)
-        self.traj_sub = rospy.Subscriber("/trajectory/current", PoseArray, self.trajectory_callback, queue_size=1)
-        self.move_car = rospy.Subscriber(odom_topic, Odometry, self.PPController, queue_size=1)
+        rospy.Subscriber("/trajectory/current", PoseArray, self.trajectory_callback, queue_size=1)
+        rospy.Subscriber(odom_topic, Odometry, self.PPController, queue_size=1)
 
         self.lookahead        = 1.0
-        self.speed            = 10.
+        self.speed            = 1.0
         self.wheelbase_length = 0.325
-        self.DIST_THRESH = 0.01
-        self.num_samples_add = 200
+        #self.num_samples_add = 200
         self.path_points_set = False
         self.path_points  = None
-        self.next_mark = None
-        self.cur_point_index = None
-        self.point1 = None
-        self.point2 = None
         
     def trajectory_callback(self, msg):
         ''' Clears the currently followed trajectory, and loads the new one from the message
         '''
         print "Receiving new trajectory:", len(msg.poses), "points"
         self.trajectory.clear()
-        # This is an upsample of the path to smooth out the cars movements at certain points in the map
         path_points = np.array(self.fromPoseArray(msg))
-        x = path_points[:,0]
-        y = path_points[:,1]
-        x_up,y_up = x, y # self.populateLine(x,y) # stack overflow code to upsample I don't understand it and you don't have to
-        self.path_points = np.transpose(np.array([x_up,y_up])) # Upsampled values are the new path points
+        self.path_points = path_points
         self.path_points_set = self.path_points is not None
-        self.next_mark = None
-        self.cur_point_index = None
-        self.point1 = None
-        self.point2 = None
-        self.started = False
-        self.trajectory.publish_viz(duration=1.0)
+        self.trajectory.publish_viz(duration=0.0)
         return
         
     def find_target(self, car_pose, car_ang):
@@ -69,8 +56,6 @@ class PurePursuit(object):
         # below is the same concept but vectorized
         path_points = self.path_points
         last_but_index = path_points.shape[0]-2
-        last_index = path_points.shape[0]-1
-        final_point = path_points[last_index,:]
         
         P1 = path_points[:-1,:]
         P2 = path_points[1:,:]
@@ -78,39 +63,33 @@ class PurePursuit(object):
         LVEC = P2 - P1
         norm = np.linalg.norm(LVEC,axis=1) 
         t = np.einsum('ij,ij->i',LVEC,P3-P1)/(norm**2) # np.dot doesn't have an axis input so you have to do this wonky thing
-        t = np.clip(t,0,1)
-        min_vecs = P1 + t[:,np.newaxis]*LVEC
-        min_vecs = min_vecs - P3
-        distances = np.linalg.norm(min_vecs,axis=1)
-        start_ind = np.argmin(distances)
+        t = np.clip(t,0,1) # Limit measure of minimum distance to the actual line
+        min_points = P1 + t[:,np.newaxis]*LVEC
+        min_vecs = min_points - P3
+        min_dist = np.linalg.norm(min_vecs,axis=1)
+        start_ind = np.argmin(min_dist)
         final_ind = start_ind + 1
-        self.cur_point_index = start_ind
          
-       if  (start_ind!=last_but_index): # don't bother if we're on the last segment
-            point1 = path_points[start_ind,:]
-            point2 = path_points[final_ind,:]
-            self.next_mark = final_ind
+        if  (start_ind!=last_but_index): # don't bother if we're on the last segment
+            next_mark = final_ind
             
             # After finding closest segment check the furthers point within lookahead range
             # if you find points make the last one the actual start of the path so you start curving to the right trajectory
-            next_mark = self.next_mark
             nextpoint = path_points[next_mark,:]
-            mag = np.linalg.norm(nextpoint-car_pose)
             future_points = path_points[next_mark:,:]
             mag_all = np.linalg.norm(future_points-car_pose,axis=1)
             
-            if mag < self.lookahead:
-                next_mark = min(last_but_index, np.argmin(mag_all<self.lookahead)-1 + next_mark)
-                point1 = path_points[next_mark,:]
-                point2 = path_points[next_mark+1,:]
-            self.point1 = point1
-            self.point2 = point2
-            
+            next_mark = min(last_but_index, np.argmin(mag_all<=self.lookahead)-1 + next_mark)
+            start_ind = next_mark
+            final_ind = next_mark+1
+
+        point1 = path_points[start_ind,:]
+        point2 = path_points[final_ind,:]
 
         # Stopping condition check is the end of the current path the last point?
         # Are you close enough to it?
-        mag_final = np.linalg.norm(final_point-car_pose)
-        if (self.cur_point_index >= last_but_index) and (mag_final <= 0.5):
+        mag_final = np.linalg.norm(path_points[-1,:]-car_pose) # Check how close you are to the goal point
+        if (start_ind >= last_but_index) and (mag_final <= 0.2):
             speed_multi = 0.0
         else:
             speed_multi = 1.0
@@ -119,8 +98,8 @@ class PurePursuit(object):
         # find the interesection of the line and lookahead circle
         # code here -> https://codereview.stackexchange.com/questions/86421/line-segment-to-circle-collision-algorithm/86428#86428
         # below modified for arrays
-        P1 = self.point1
-        P2 = self.point2
+        P1 = point1
+        P2 = point2
         Q = car_pose
         r = self.lookahead
         V = P2 - P1

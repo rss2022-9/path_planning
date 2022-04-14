@@ -32,7 +32,7 @@ class PurePursuit(object):
         rospy.Subscriber(odom_topic, Odometry, self.PPController, queue_size=1)
 
         self.lookahead        = 1.0
-        self.speed            = 1.0
+        self.speed            = 4.0
         self.wheelbase_length = 0.325
         #self.num_samples_add = 200
         self.path_points_set = False
@@ -90,9 +90,9 @@ class PurePursuit(object):
         # Are you close enough to it?
         mag_final = np.linalg.norm(path_points[-1,:]-car_pose) # Check how close you are to the goal point
         if (start_ind >= last_but_index) and (mag_final <= 0.2):
-            speed_multi = 0.0
+            speed = 0.0
         else:
-            speed_multi = 1.0
+            speed = self.speed
 
         # After fiding the right line segmennt you have start and end of line segment
         # find the interesection of the line and lookahead circle
@@ -125,7 +125,7 @@ class PurePursuit(object):
         rel_ang = car_ang - ang
         rel_x =  mag*np.sin(rel_ang)
         VisualizationTools.plot_point(target[0], target[1], self.point_pub, frame="/map") # Visualize target point
-        return rel_x, speed_multi
+        return rel_x, speed
 
     # Pure pursuit controller
     def PPController(self, car_odom):
@@ -134,11 +134,9 @@ class PurePursuit(object):
             car_quat = [car_odom.pose.pose.orientation.x, car_odom.pose.pose.orientation.y, car_odom.pose.pose.orientation.z, car_odom.pose.pose.orientation.w]
             (roll, pitch, yaw) = euler_from_quaternion(car_quat)
             VisualizationTools.plot_line(self.path_points[:,0], self.path_points[:,1], self.line_pub, frame="/map") # Visualize path
-            x, speed_multi= self.find_target(car_tran, yaw)
-            
+            x, speed = self.find_target(car_tran, yaw)
             tr = (self.lookahead**2)/(2*x) if x != 0 else 0 # Turning radius from relative x
             ang = -np.arctan(self.wheelbase_length/tr) # Angle from turning radius
-            speed = self.speed*speed_multi
             output = max(min(ang,0.34),-0.34)
             drive_cmd = AckermannDriveStamped()
             drive_cmd.header.stamp = rospy.Time.now()

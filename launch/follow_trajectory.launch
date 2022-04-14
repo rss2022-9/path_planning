@@ -5,5 +5,9 @@
 	</node>
 	
 	<node pkg="lab6" name="safety_controller" type="safety.py" output="screen">
-  	</node>
+  		<param name="drive_topic" value="/vesc/high_level/ackermann_cmd_mux/output"/>
+    		<param name="safety_topic" value="/vesc/low_level/ackermann_cmd_mux/input/safety"/>
+    		<param name="stop_dist_factor" value="0.1"/>
+    		<param name="stop_dist" value="0.5"/>
+	</node>
 </launch>

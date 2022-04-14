@@ -50,7 +50,7 @@ class PurePursuit(object):
         path_points = np.array(self.fromPoseArray(msg))
         x = path_points[:,0]
         y = path_points[:,1]
-        x_up,y_up = self.populateLine(x,y) # stack overflow code to upsample I don't understand it and you don't have to
+        x_up,y_up = x, y # self.populateLine(x,y) # stack overflow code to upsample I don't understand it and you don't have to
         self.path_points = np.transpose(np.array([x_up,y_up])) # Upsampled values are the new path points
         self.path_points_set = self.path_points is not None
         self.next_mark = None

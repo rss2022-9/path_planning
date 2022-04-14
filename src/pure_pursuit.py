@@ -18,8 +18,8 @@ class PurePursuit(object):
     """ Implements Pure Pursuit trajectory tracking with a fixed lookahead and speed.
     """
     def __init__(self):
-        odom_topic = rospy.get_param("~odom_topic")
-        drive_topic = rospy.get_param("~drive_topic")
+        odom_topic = rospy.get_param("~odom_topic", "/pf/pose/odom")
+        drive_topic = rospy.get_param("~drive_topic", "/vesc/low_level/ackermann_cmd_mux/input/navigation")
         self.trajectory = utils.LineTrajectory("/followed_trajectory")
         point_topic = "/pp/point"
         line_topic = "/pp/line"

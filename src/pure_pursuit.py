@@ -22,11 +22,15 @@ class PurePursuit(object):
         self.trajectory = utils.LineTrajectory("/followed_trajectory")
         point_topic = "/pp/point"
         line_topic = "/pp/line"
-        self.point_pub = rospy.Publisher(point_topic, Marker, queue_size=10)
-        self.line_pub = rospy.Publisher(line_topic, Marker, queue_size=10)
-        self.drive_pub = rospy.Publisher("/vesc/low_level/ackermann_cmd_mux/input/navigation", AckermannDriveStamped, queue_size=10)
+        self.point_pub = rospy.Publisher(point_topic, Marker, queue_size=1)
+        self.line_pub = rospy.Publisher(line_topic, Marker, queue_size=1)
+        self.drive_pub = rospy.Publisher("/drive", AckermannDriveStamped, queue_size=1)
+        self.min_dist = rospy.Publisher("/pp/min_dist", Float32, queue_size=1)
+        self.traj_sub = rospy.Subscriber("/trajectory/current", PoseArray, self.trajectory_callback, queue_size=1)
+        self.move_car = rospy.Subscriber("/odom", Odometry, self.PPController, queue_size=1)
+
         self.lookahead        = 1.0
-        self.speed            = 1.0
+        self.speed            = 10.
         self.wheelbase_length = 0.325
         self.DIST_THRESH = 0.01
         self.num_samples_add = 200
@@ -36,8 +40,6 @@ class PurePursuit(object):
         self.cur_point_index = None
         self.point1 = None
         self.point2 = None
-        self.traj_sub = rospy.Subscriber("/trajectory/current", PoseArray, self.trajectory_callback, queue_size=10)
-        self.move_car = rospy.Subscriber("/pf/pose/odom", Odometry, self.PPController, queue_size=10)
         
     def trajectory_callback(self, msg):
         ''' Clears the currently followed trajectory, and loads the new one from the message
@@ -83,19 +85,21 @@ class PurePursuit(object):
         final_ind = start_ind + 1
         self.cur_point_index = start_ind
          
-        if  (start_ind!=last_but_index): # don't bother if we're on the last segment
+       if  (start_ind!=last_but_index): # don't bother if we're on the last segment
             point1 = path_points[start_ind,:]
             point2 = path_points[final_ind,:]
             self.next_mark = final_ind
-            self.started = True
             
             # After finding closest segment check the furthers point within lookahead range
             # if you find points make the last one the actual start of the path so you start curving to the right trajectory
             next_mark = self.next_mark
             nextpoint = path_points[next_mark,:]
             mag = np.linalg.norm(nextpoint-car_pose)
+            future_points = path_points[next_mark:,:]
+            mag_all = np.linalg.norm(future_points-car_pose,axis=1)
+            
             if mag < self.lookahead:
-                next_mark = np.argmin(mag<self.lookahead) + next_mark
+                next_mark = min(last_but_index, np.argmin(mag_all<self.lookahead)-1 + next_mark)
                 point1 = path_points[next_mark,:]
                 point2 = path_points[next_mark+1,:]
             self.point1 = point1

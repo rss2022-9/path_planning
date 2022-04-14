@@ -3,4 +3,7 @@
 		<param name="odom_topic" value="/pf/pose/odom"/>
 		<param name="drive_topic" value="/vesc/low_level/ackermann_cmd_mux/input/navigation"/>
 	</node>
+	
+	<node pkg="lab6" name="safety_controller" type="safety.py" output="screen">
+  	</node>
 </launch>

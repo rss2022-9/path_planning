@@ -1,19 +1,18 @@
 #!/usr/bin/env python
 
-import rospy
 import numpy as np
-import time
 import utils
-import tf
+import rospy
+import time
 
 from tf.transformations import euler_from_quaternion
 from geometry_msgs.msg import PoseArray, PoseStamped
-from visualization_msgs.msg import Marker
-from std_msgs.msg import Float32
 from ackermann_msgs.msg import AckermannDriveStamped
+from visualization_msgs.msg import Marker
 from scipy.interpolate import interp1d
 from visualization_tools import *
 from nav_msgs.msg import Odometry
+from std_msgs.msg import Float32
 
 class PurePursuit(object):
     """ Implements Pure Pursuit trajectory tracking with a fixed lookahead and speed.
